@@ -67,6 +67,19 @@ function workbook(rows, fullText = '') {
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 }
 function safeId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 9); }
+function createPdfExactExcel(id, pdfPath) {
+  const output = path.join(OUT, id + '.visual.xlsx');
+  const renderDir = path.join(OUT, id + '-pages');
+  const helper = path.join(process.cwd(), 'scripts', 'pdf_exact_excel.py');
+  fs.mkdirSync(renderDir, { recursive: true });
+  return new Promise((resolve, reject) => {
+    const child = spawn(pythonCommand(), [helper, pdfPath, output, renderDir], { stdio: 'inherit' });
+    child.on('error', reject);
+    child.on('close', code => code === 0 && fs.existsSync(output)
+      ? resolve(output)
+      : reject(new Error('Gagal membuat Excel dengan layout PDF asli.')));
+  });
+}
 function createVisualExcel(id, imagePaths) {
   const output = path.join(OUT, id + '.visual.xlsx');
   const helper = path.join(process.cwd(), 'scripts', 'visual_excel.py');
@@ -145,9 +158,12 @@ app.post('/api/extract', upload.single('file'), async (req, res) => {
     else return res.status(400).json({ error: 'Format didukung: PDF, DOCX, TXT, MD, CSV, XLSX, XLS.' });
     const id = safeId();
     const originalText = ['.txt', '.md', '.pdf', '.docx'].includes(ext) ? (ext === '.docx' ? '' : fs.readFileSync(p, 'utf8')) : '';
-    fs.writeFileSync(path.join(OUT, id + '.xlsx'), workbook(rows, originalText));
-    await polishExcel(path.join(OUT, id + '.xlsx'));
-    res.json({ id, rows: pad(rows).slice(0, 200), count: rows.length });
+    const standardPath = path.join(OUT, id + '.xlsx');
+    fs.writeFileSync(standardPath, workbook(rows, originalText));
+    await polishExcel(standardPath);
+    let exact = null;
+    if (ext === '.pdf') exact = await createPdfExactExcel(id, p);
+    res.json({ id, rows: pad(rows).slice(0, 200), count: rows.length, exactExcel: exact ? `/api/download-exact/${id}` : null, message: exact ? 'PDF dipertahankan sebagai halaman asli di Excel.' : null });
   } catch (e) { res.status(500).json({ error: 'Gagal membaca file: ' + e.message }); }
   finally { try { fs.unlinkSync(p); } catch {} }
 });
@@ -156,6 +172,12 @@ app.get('/api/download/:id', (req, res) => {
   const p = path.join(OUT, req.params.id + '.xlsx');
   if (!fs.existsSync(p)) return res.status(404).send('File kedaluwarsa. Silakan proses ulang.');
   res.download(p, 'hasil-konversi.xlsx');
+});
+
+app.get('/api/download-exact/:id', (req, res) => {
+  const p = path.join(OUT, req.params.id + '.visual.xlsx');
+  if (!fs.existsSync(p)) return res.status(404).send('Excel layout asli tidak ditemukan. Silakan proses ulang.');
+  res.download(p, 'hasil-konversi-tampilan-asli.xlsx');
 });
 
 app.post('/api/check-url', async (req, res) => {
@@ -182,14 +204,14 @@ app.post('/api/scribd/download', async (req, res) => {
   try {
     // The third-party tool is used only for publicly accessible Scribd documents; no account, paywall,
     // CAPTCHA, DRM or subscription credentials are accepted by this application.
-    await runScribdl(url, dir, mode === 'text' ? 'text' : mode === 'images' ? 'images' : 'auto');
+    await runScribdl(url, dir, mode === 'text' ? 'text' : 'images');
     let files = newestFiles(dir);
     let md = files.find(x => /\.md$/i.test(x.name));
     let images = files.filter(x => /\.(jpe?g|png|webp)$/i.test(x.name));
 
-    // Auto fallback: if text mode produced nothing useful, try the image mode.
-    if (mode === 'auto' && !md && images.length === 0) {
-      await runScribdl(url, dir, 'images');
+    // Auto mode prefers page images so the original visual layout is preserved.
+    if (mode === 'auto' && images.length === 0 && !md) {
+      await runScribdl(url, dir, 'text');
       files = newestFiles(dir); md = files.find(x => /\.md$/i.test(x.name)); images = files.filter(x => /\.(jpe?g|png|webp)$/i.test(x.name));
     }
 
