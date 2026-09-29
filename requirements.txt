@@ -1,0 +1,2 @@
+Pillow>=10.0
+scribd-downloader @ git+https://github.com/Phoenix124/scribd-downloader.git

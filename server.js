@@ -5,9 +5,10 @@ import path from 'path';
 import os from 'os';
 import axios from 'axios';
 import * as XLSX from 'xlsx';
-import pdf from 'pdf-parse';
+import * as pdfjs from 'pdf-parse';
 import mammoth from 'mammoth';
 import * as cheerio from 'cheerio';
+import { spawn } from 'child_process';
 
 const app = express();
 const TMP = path.join(os.tmpdir(), 'scribd-excel-v2');
@@ -17,13 +18,6 @@ fs.mkdirSync(OUT, { recursive: true });
 const upload = multer({ dest: TMP, limits: { fileSize: 25 * 1024 * 1024 } });
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static('public'));
-
-const SOURCES = {
-  scribd: { label: 'Scribd', hosts: ['scribd.com', 'www.scribd.com', 'id.scribd.com'] },
-  issuu: { label: 'Issuu', hosts: ['issuu.com'] },
-  slideshare: { label: 'SlideShare', hosts: ['slideshare.net', 'www.slideshare.net'] },
-  academia: { label: 'Academia', hosts: ['academia.edu', 'www.academia.edu'] }
-};
 
 function rowsFromText(text) {
   return text.split(/\r?\n/).map(s => s.trim()).filter(Boolean).map(line => {
@@ -41,57 +35,48 @@ function workbook(rows) {
   XLSX.utils.book_append_sheet(wb, ws, 'Data');
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 }
-function sourceFor(hostname) {
-  const h = hostname.toLowerCase();
-  return Object.entries(SOURCES).find(([, s]) => s.hosts.includes(h))?.[0] || null;
-}
-function isAllowedHost(url) {
-  try { return !!sourceFor(new URL(url).hostname); } catch { return false; }
-}
-function isDirectFile(url) {
-  return /\.(pdf|docx?|xlsx?|csv|txt)(?:[?#].*)?$/i.test(url);
-}
-function absoluteLinks($, base) {
-  const out = [];
-  $('a[href], link[href], meta[content]').each((_, el) => {
-    const raw = $(el).attr('href') || $(el).attr('content');
-    if (!raw) return;
-    try {
-      const u = new URL(raw, base).href;
-      if (/\.(pdf|docx?|xlsx?|csv|txt)(?:[?#].*)?$/i.test(u)) out.push(u);
-    } catch {}
-  });
-  return [...new Set(out)];
-}
-
-app.post('/api/resolve', async (req, res) => {
-  const url = String(req.body?.url || '').trim();
-  let u;
-  try { u = new URL(url); } catch { return res.status(400).json({ error: 'URL tidak valid.' }); }
-  const source = sourceFor(u.hostname);
-  if (!source) return res.status(400).json({ error: 'URL harus berasal dari Scribd, Issuu, SlideShare, atau Academia.' });
-
+function safeId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 9); }
+function isScribdUrl(raw) {
   try {
-    if (isDirectFile(url)) {
-      return res.json({ source, title: path.basename(u.pathname), url, publicDownloadLinks: [url], downloadable: true, message: 'Tautan file langsung terdeteksi.' });
-    }
-    const r = await axios.get(url, {
-      timeout: 15000,
-      maxRedirects: 5,
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/153 Safari/537.36', Accept: 'text/html,application/xhtml+xml' },
-      validateStatus: s => s >= 200 && s < 400
+    const u = new URL(raw);
+    return /^([a-z0-9-]+\.)*scribd\.com$/i.test(u.hostname);
+  } catch { return false; }
+}
+function pythonCommand() {
+  if (process.env.PYTHON_BIN) return process.env.PYTHON_BIN;
+  return process.platform === 'win32' ? 'python' : 'python3';
+}
+function runScribdl(url, workDir, mode = 'auto') {
+  return new Promise((resolve, reject) => {
+    const args = ['-m', 'scribdl'];
+    if (mode === 'images') args.push('-i');
+    args.push(url);
+    const child = spawn(pythonCommand(), args, { cwd: workDir, env: process.env });
+    let stdout = '', stderr = '';
+    child.stdout.on('data', d => stdout += d.toString());
+    child.stderr.on('data', d => stderr += d.toString());
+    const timer = setTimeout(() => { child.kill('SIGTERM'); reject(new Error('Proses downloader melebihi batas 90 detik.')); }, 90000);
+    child.on('error', e => { clearTimeout(timer); reject(new Error('Python/scribdl belum terpasang di server: ' + e.message)); });
+    child.on('close', code => {
+      clearTimeout(timer);
+      if (code !== 0) return reject(new Error((stderr || stdout || `scribdl berhenti dengan kode ${code}`).trim().slice(-3000)));
+      resolve({ stdout, stderr });
     });
-    const $ = cheerio.load(r.data);
-    const title = $('meta[property="og:title"]').attr('content') || $('meta[name="twitter:title"]').attr('content') || $('title').text().trim() || `Dokumen ${SOURCES[source].label}`;
-    const links = absoluteLinks($, url);
-    const canonical = $('link[rel="canonical"]').attr('href') || url;
-    const text = $('body').text().replace(/\s+/g, ' ').trim();
-    const restricted = /sign in|log in|subscribe|premium|download.*not available|not available for download/i.test(text);
-    res.json({ source, title, url: canonical, publicDownloadLinks: links.slice(0, 10), downloadable: links.length > 0, restrictedHint: restricted, message: links.length ? 'Tautan file publik yang terlihat pada halaman ditemukan.' : `Tidak ada tautan file publik yang terlihat. Jika ${SOURCES[source].label} menyediakan tombol download untuk akun Anda, gunakan download resmi lalu unggah file ke aplikasi.` });
-  } catch (e) {
-    res.status(502).json({ error: `Tidak dapat memeriksa halaman ${SOURCES[source].label}: ${e.message}` });
-  }
-});
+  });
+}
+function newestFiles(dir) {
+  return fs.readdirSync(dir).map(name => ({ name, path: path.join(dir, name) }))
+    .filter(x => fs.statSync(x.path).isFile())
+    .sort((a,b) => fs.statSync(b.path).mtimeMs - fs.statSync(a.path).mtimeMs);
+}
+function buildPdfFromImages(imagePaths, outPath) {
+  const imgs = imagePaths.map(p => requireImage(p));
+  if (!imgs.length) throw new Error('Tidak ada halaman gambar yang dihasilkan.');
+  const rgb = imgs.map(im => im.convert('RGB'));
+  rgb[0].save(outPath, { saveAll: true, appendImages: rgb.slice(1), format: 'PDF', resolution: 150 });
+}
+// Lazy-load Pillow through a small Python helper instead of adding a Node native image dependency.
+function requireImage() { throw new Error('PDF gambar dibuat oleh helper Python.'); }
 
 app.post('/api/extract', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'File belum dipilih.' });
@@ -101,11 +86,11 @@ app.post('/api/extract', upload.single('file'), async (req, res) => {
     if (['.xlsx', '.xls', '.csv'].includes(ext)) {
       const wb = XLSX.readFile(p); const ws = wb.Sheets[wb.SheetNames[0]];
       rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-    } else if (ext === '.txt') rows = rowsFromText(fs.readFileSync(p, 'utf8'));
-    else if (ext === '.pdf') rows = rowsFromText((await pdf(fs.readFileSync(p))).text);
-    else if (ext === '.docx') rows = rowsFromText((await mammoth.extractRawText({ path: p })).value);
-    else return res.status(400).json({ error: 'Format didukung: PDF, DOCX, TXT, CSV, XLSX, XLS.' });
-    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    } else if (ext === '.txt' || ext === '.md') rows = rowsFromText(fs.readFileSync(p, 'utf8'));
+    else if (ext === '.pdf') { const data = await pdfjs(fs.readFileSync(p)); rows = rowsFromText(data.text); }
+    else if (ext === '.docx') { const data = await mammoth.extractRawText({ path: p }); rows = rowsFromText(data.value); }
+    else return res.status(400).json({ error: 'Format didukung: PDF, DOCX, TXT, MD, CSV, XLSX, XLS.' });
+    const id = safeId();
     fs.writeFileSync(path.join(OUT, id + '.xlsx'), workbook(rows));
     res.json({ id, rows: pad(rows).slice(0, 200), count: rows.length });
   } catch (e) { res.status(500).json({ error: 'Gagal membaca file: ' + e.message }); }
@@ -118,4 +103,90 @@ app.get('/api/download/:id', (req, res) => {
   res.download(p, 'hasil-konversi.xlsx');
 });
 
-app.listen(process.env.PORT || 3000, () => console.log('Document Downloader + Excel running on ' + (process.env.PORT || 3000)));
+app.post('/api/check-url', async (req, res) => {
+  const url = String(req.body?.url || '').trim();
+  if (!isScribdUrl(url)) return res.status(400).json({ error: 'Masukkan URL Scribd yang valid.' });
+  try {
+    const r = await axios.get(url, { timeout: 12000, headers: { 'User-Agent': 'Mozilla/5.0' }, maxRedirects: 5 });
+    const $ = cheerio.load(r.data);
+    const title = $('meta[property="og:title"]').attr('content') || $('title').text().trim() || 'Dokumen Scribd';
+    res.json({ title, url, engineAvailable: true, message: 'URL valid. Gunakan tombol Download melalui engine server untuk dokumen yang dapat diakses.' });
+  } catch (e) {
+    res.status(502).json({ error: 'Halaman Scribd tidak dapat diperiksa dari server. Coba lagi atau gunakan unduhan resmi lalu unggah file.' });
+  }
+});
+
+app.post('/api/scribd/download', async (req, res) => {
+  const url = String(req.body?.url || '').trim();
+  const mode = ['auto', 'text', 'images'].includes(req.body?.mode) ? req.body.mode : 'auto';
+  if (!isScribdUrl(url)) return res.status(400).json({ error: 'URL Scribd tidak valid.' });
+
+  const jobId = safeId();
+  const dir = path.join(TMP, 'jobs', jobId);
+  fs.mkdirSync(dir, { recursive: true });
+  try {
+    // The third-party tool is used only for publicly accessible Scribd documents; no account, paywall,
+    // CAPTCHA, DRM or subscription credentials are accepted by this application.
+    await runScribdl(url, dir, mode === 'text' ? 'text' : mode === 'images' ? 'images' : 'auto');
+    let files = newestFiles(dir);
+    let md = files.find(x => /\.md$/i.test(x.name));
+    let images = files.filter(x => /\.(jpe?g|png|webp)$/i.test(x.name));
+
+    // Auto fallback: if text mode produced nothing useful, try the image mode.
+    if (mode === 'auto' && !md && images.length === 0) {
+      await runScribdl(url, dir, 'images');
+      files = newestFiles(dir); md = files.find(x => /\.md$/i.test(x.name)); images = files.filter(x => /\.(jpe?g|png|webp)$/i.test(x.name));
+    }
+
+    if (md) {
+      const id = safeId();
+      const text = fs.readFileSync(md.path, 'utf8');
+      const base = path.basename(md.name, '.md');
+      const mdPath = path.join(OUT, id + '.md');
+      const xlsxPath = path.join(OUT, id + '.xlsx');
+      fs.writeFileSync(mdPath, text);
+      fs.writeFileSync(xlsxPath, workbook(rowsFromText(text)));
+      return res.json({ id, type: 'text', title: base, textPreview: text.slice(0, 8000), download: `/api/scribd/file/${id}`, excel: `/api/scribd/excel/${id}` });
+    }
+
+    if (images.length) {
+      const id = safeId();
+      const manifest = images.map(x => x.path);
+      fs.writeFileSync(path.join(OUT, id + '.json'), JSON.stringify({ images: manifest }));
+      return res.json({ id, type: 'images', pages: images.length, title: path.basename(images[0].name).replace(/[_-]?\d+\.(jpe?g|png|webp)$/i, ''), download: `/api/scribd/file/${id}`, note: 'Dokumen terdiri dari halaman gambar. Gunakan Download PDF untuk menggabungkan halaman.' });
+    }
+    return res.status(422).json({ error: 'Engine tidak menghasilkan dokumen. Pastikan URL menunjuk ke dokumen yang dapat diakses dan Anda memiliki hak untuk mengunduhnya.' });
+  } catch (e) {
+    return res.status(502).json({ error: e.message, hint: 'Pastikan Python 3 dan scribd-downloader sudah terpasang. Di Railway, gunakan Dockerfile yang disertakan.' });
+  }
+});
+
+app.get('/api/scribd/file/:id', (req, res) => {
+  const md = path.join(OUT, req.params.id + '.md');
+  const manifest = path.join(OUT, req.params.id + '.json');
+  if (fs.existsSync(md)) return res.download(md, 'dokumen-scribd.md');
+  if (fs.existsSync(manifest)) return res.status(409).json({ error: 'Dokumen berupa halaman gambar. Gunakan endpoint PDF.' });
+  res.status(404).send('Hasil tidak ditemukan.');
+});
+app.get('/api/scribd/excel/:id', (req, res) => {
+  const p = path.join(OUT, req.params.id + '.xlsx');
+  if (!fs.existsSync(p)) return res.status(404).send('Excel tidak ditemukan.');
+  res.download(p, 'hasil-scribd.xlsx');
+});
+app.get('/api/scribd/pdf/:id', (req, res) => {
+  const manifestPath = path.join(OUT, req.params.id + '.json');
+  if (!fs.existsSync(manifestPath)) return res.status(404).send('PDF hanya tersedia untuk hasil halaman gambar.');
+  const data = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  const helper = path.join(process.cwd(), 'scripts', 'images_to_pdf.py');
+  const output = path.join(OUT, req.params.id + '.pdf');
+  const child = spawn(pythonCommand(), [helper, output, ...data.images], { stdio: 'inherit' });
+  child.on('error', e => res.status(500).send('Gagal membuat PDF: ' + e.message));
+  child.on('close', code => {
+    if (code !== 0 || !fs.existsSync(output)) return res.status(500).send('Gagal membuat PDF.');
+    res.download(output, 'dokumen-scribd.pdf');
+  });
+});
+
+app.get('/api/health', (req, res) => res.json({ ok: true, python: pythonCommand() }));
+
+app.listen(process.env.PORT || 3000, () => console.log('Scribd Excel V2 running on ' + (process.env.PORT || 3000)));
