@@ -1,30 +1,15 @@
-# Scribd → Excel V2 (public-download safe)
+# Document Downloader + Excel
 
-Aplikasi Node.js untuk:
-- memeriksa URL Scribd;
-- mengunduh **file yang memang tersedia secara publik** melalui URL file langsung;
-- mengonversi PDF/DOCX/TXT/CSV/XLS/XLSX menjadi Excel;
-- preview hasil dan download `hasil-konversi.xlsx`.
+Versi proyek ini mengikuti pola antarmuka DocDownloader: pilihan Scribd, Issuu, SlideShare, dan Academia; kolom URL; tombol Get Link; hasil tautan file publik; serta konversi file ke Excel.
 
-## Jalankan
-```bash
-npm install
-npm start
-```
-
-Buka `http://localhost:3000`.
-
-## Batasan Scribd
-Aplikasi **tidak** membypass login, subscription, CAPTCHA, DRM, paywall, token privat, atau proteksi Scribd.
-Jika sebuah dokumen hanya dapat diunduh setelah login/berlangganan, gunakan fitur unduh resmi Scribd atau unggah file yang memang Anda miliki/hak untuk mengolahnya.
+## Menjalankan
+1. Node.js 20+
+2. `npm install`
+3. `npm start`
+4. Buka `http://localhost:3000`
 
 ## Railway
-- Root directory: folder proyek ini.
-- Build/install: `npm install`
-- Start command: `npm start`
-- Port: gunakan `process.env.PORT` (sudah didukung server).
+Deploy sebagai Node.js app dan gunakan start command `npm start`.
 
-## Alur baru
-1. Tempel URL Scribd → Periksa URL.
-2. Jika server menemukan URL file yang benar-benar publik, klik **Gunakan tautan publik ini**.
-3. Jika tidak, gunakan tombol **Unduh resmi** di Scribd lalu unggah file ke bagian konversi.
+## Batasan akses
+Resolver hanya mencari file yang tersedia secara publik pada HTML halaman atau URL file langsung. Ia tidak membypass login, subscription, CAPTCHA, DRM, paywall, atau pembatasan akses. Untuk dokumen yang hanya dapat di-download melalui akun/izin pengguna, gunakan download resmi lalu upload file ke bagian konversi.

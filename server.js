@@ -5,7 +5,7 @@ import path from 'path';
 import os from 'os';
 import axios from 'axios';
 import * as XLSX from 'xlsx';
-import * as pdfjs from 'pdf-parse';
+import pdf from 'pdf-parse';
 import mammoth from 'mammoth';
 import * as cheerio from 'cheerio';
 
@@ -14,144 +14,102 @@ const TMP = path.join(os.tmpdir(), 'scribd-excel-v2');
 const OUT = path.join(os.tmpdir(), 'scribd-out');
 fs.mkdirSync(TMP, { recursive: true });
 fs.mkdirSync(OUT, { recursive: true });
-
-const upload = multer({
-  dest: TMP,
-  limits: { fileSize: 25 * 1024 * 1024 }
-});
-
+const upload = multer({ dest: TMP, limits: { fileSize: 25 * 1024 * 1024 } });
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static('public'));
 
-function rowsFromText(text) {
-  return text.split(/\r?\n/)
-    .map(s => s.trim())
-    .filter(Boolean)
-    .map(line => {
-      const parts = line.includes('\t') ? line.split('\t') : line.split(/\s{2,}/);
-      return parts.map(x => x.trim());
-    });
-}
+const SOURCES = {
+  scribd: { label: 'Scribd', hosts: ['scribd.com', 'www.scribd.com', 'id.scribd.com'] },
+  issuu: { label: 'Issuu', hosts: ['issuu.com'] },
+  slideshare: { label: 'SlideShare', hosts: ['slideshare.net', 'www.slideshare.net'] },
+  academia: { label: 'Academia', hosts: ['academia.edu', 'www.academia.edu'] }
+};
 
+function rowsFromText(text) {
+  return text.split(/\r?\n/).map(s => s.trim()).filter(Boolean).map(line => {
+    const parts = line.includes('\t') ? line.split('\t') : line.split(/\s{2,}/);
+    return parts.map(x => x.trim());
+  });
+}
 function pad(rows) {
   const n = Math.max(1, ...rows.map(r => r.length));
   return rows.map(r => Array.from({ length: n }, (_, i) => r[i] ?? ''));
 }
-
 function workbook(rows) {
   const ws = XLSX.utils.aoa_to_sheet(pad(rows));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Data');
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 }
-
-function safeExt(name, contentType = '') {
-  const ext = path.extname(new URL(name, 'http://localhost').pathname).toLowerCase();
-  if (['.pdf','.doc','.docx','.txt','.csv','.xls','.xlsx'].includes(ext)) return ext;
-  const ct = contentType.split(';')[0].toLowerCase();
-  const map = {
-    'application/pdf': '.pdf',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
-    'application/msword': '.doc',
-    'text/plain': '.txt',
-    'text/csv': '.csv',
-    'application/vnd.ms-excel': '.xls',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx'
-  };
-  return map[ct] || '';
+function sourceFor(hostname) {
+  const h = hostname.toLowerCase();
+  return Object.entries(SOURCES).find(([, s]) => s.hosts.includes(h))?.[0] || null;
 }
-
-async function downloadPublicFile(url) {
-  const r = await axios.get(url, {
-    responseType: 'arraybuffer',
-    timeout: 30000,
-    maxRedirects: 5,
-    maxContentLength: 25 * 1024 * 1024,
-    maxBodyLength: 25 * 1024 * 1024,
-    headers: { 'User-Agent': 'Mozilla/5.0' }
+function isAllowedHost(url) {
+  try { return !!sourceFor(new URL(url).hostname); } catch { return false; }
+}
+function isDirectFile(url) {
+  return /\.(pdf|docx?|xlsx?|csv|txt)(?:[?#].*)?$/i.test(url);
+}
+function absoluteLinks($, base) {
+  const out = [];
+  $('a[href], link[href], meta[content]').each((_, el) => {
+    const raw = $(el).attr('href') || $(el).attr('content');
+    if (!raw) return;
+    try {
+      const u = new URL(raw, base).href;
+      if (/\.(pdf|docx?|xlsx?|csv|txt)(?:[?#].*)?$/i.test(u)) out.push(u);
+    } catch {}
   });
-  const type = String(r.headers['content-type'] || '');
-  const ext = safeExt(url, type);
-  if (!ext) {
-    throw new Error('URL tersebut tidak mengarah ke file PDF/DOC/DOCX/TXT/CSV/XLS/XLSX yang dapat diakses secara publik.');
-  }
-  const filename = 'dokumen-' + Date.now() + ext;
-  const filePath = path.join(TMP, filename);
-  fs.writeFileSync(filePath, Buffer.from(r.data));
-  return { filePath, filename, contentType: type };
+  return [...new Set(out)];
 }
 
-async function extractFile(filePath, originalname) {
-  const ext = path.extname(originalname).toLowerCase();
-  let rows = [];
+app.post('/api/resolve', async (req, res) => {
+  const url = String(req.body?.url || '').trim();
+  let u;
+  try { u = new URL(url); } catch { return res.status(400).json({ error: 'URL tidak valid.' }); }
+  const source = sourceFor(u.hostname);
+  if (!source) return res.status(400).json({ error: 'URL harus berasal dari Scribd, Issuu, SlideShare, atau Academia.' });
 
-  if (['.xlsx','.xls','.csv'].includes(ext)) {
-    const wb = XLSX.readFile(filePath);
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-  } else if (ext === '.txt' || ext === '.csv') {
-    rows = rowsFromText(fs.readFileSync(filePath, 'utf8'));
-  } else if (ext === '.pdf') {
-    const data = await pdfjs(fs.readFileSync(filePath));
-    rows = rowsFromText(data.text);
-  } else if (ext === '.docx') {
-    const data = await mammoth.extractRawText({ path: filePath });
-    rows = rowsFromText(data.value);
-  } else if (ext === '.doc') {
-    throw new Error('Format DOC lama belum didukung. Simpan sebagai DOCX atau PDF terlebih dahulu.');
-  } else {
-    throw new Error('Format didukung: PDF, DOCX, TXT, CSV, XLSX, XLS.');
-  }
-
-  return rows;
-}
-
-async function createResult(filePath, originalname) {
-  const rows = await extractFile(filePath, originalname);
-  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-  fs.writeFileSync(path.join(OUT, id + '.xlsx'), workbook(rows));
-  return { id, rows: pad(rows).slice(0, 200), count: rows.length };
-}
-
-app.post('/api/extract', upload.single('file'), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'File belum dipilih.' });
   try {
-    const result = await createResult(req.file.path, req.file.originalname);
-    res.json(result);
+    if (isDirectFile(url)) {
+      return res.json({ source, title: path.basename(u.pathname), url, publicDownloadLinks: [url], downloadable: true, message: 'Tautan file langsung terdeteksi.' });
+    }
+    const r = await axios.get(url, {
+      timeout: 15000,
+      maxRedirects: 5,
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/153 Safari/537.36', Accept: 'text/html,application/xhtml+xml' },
+      validateStatus: s => s >= 200 && s < 400
+    });
+    const $ = cheerio.load(r.data);
+    const title = $('meta[property="og:title"]').attr('content') || $('meta[name="twitter:title"]').attr('content') || $('title').text().trim() || `Dokumen ${SOURCES[source].label}`;
+    const links = absoluteLinks($, url);
+    const canonical = $('link[rel="canonical"]').attr('href') || url;
+    const text = $('body').text().replace(/\s+/g, ' ').trim();
+    const restricted = /sign in|log in|subscribe|premium|download.*not available|not available for download/i.test(text);
+    res.json({ source, title, url: canonical, publicDownloadLinks: links.slice(0, 10), downloadable: links.length > 0, restrictedHint: restricted, message: links.length ? 'Tautan file publik yang terlihat pada halaman ditemukan.' : `Tidak ada tautan file publik yang terlihat. Jika ${SOURCES[source].label} menyediakan tombol download untuk akun Anda, gunakan download resmi lalu unggah file ke aplikasi.` });
   } catch (e) {
-    res.status(500).json({ error: 'Gagal membaca file: ' + e.message });
-  } finally {
-    try { fs.unlinkSync(req.file.path); } catch {}
+    res.status(502).json({ error: `Tidak dapat memeriksa halaman ${SOURCES[source].label}: ${e.message}` });
   }
 });
 
-/*
- * Unduh URL file yang memang dapat diakses publik.
- * Ini tidak mencoba melewati login, subscription, CAPTCHA, DRM, paywall,
- * atau proteksi Scribd.
- */
-app.post('/api/download-public', async (req, res) => {
-  const url = String(req.body?.url || '').trim();
-  let u;
-  try { u = new URL(url); }
-  catch { return res.status(400).json({ error: 'URL tidak valid.' }); }
-
-  if (!['http:', 'https:'].includes(u.protocol)) {
-    return res.status(400).json({ error: 'URL harus menggunakan HTTP atau HTTPS.' });
-  }
-
+app.post('/api/extract', upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'File belum dipilih.' });
+  const p = req.file.path, ext = path.extname(req.file.originalname).toLowerCase();
   try {
-    const file = await downloadPublicFile(url);
-    res.download(file.filePath, file.filename, () => {
-      try { fs.unlinkSync(file.filePath); } catch {}
-    });
-  } catch (e) {
-    res.status(400).json({
-      error: e.response?.status === 401 || e.response?.status === 403
-        ? 'File membutuhkan izin/login sehingga tidak dapat diunduh oleh server. Gunakan tombol Unduh resmi Scribd atau unggah file yang Anda miliki.'
-        : e.message
-    });
-  }
+    let rows = [];
+    if (['.xlsx', '.xls', '.csv'].includes(ext)) {
+      const wb = XLSX.readFile(p); const ws = wb.Sheets[wb.SheetNames[0]];
+      rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    } else if (ext === '.txt') rows = rowsFromText(fs.readFileSync(p, 'utf8'));
+    else if (ext === '.pdf') rows = rowsFromText((await pdf(fs.readFileSync(p))).text);
+    else if (ext === '.docx') rows = rowsFromText((await mammoth.extractRawText({ path: p })).value);
+    else return res.status(400).json({ error: 'Format didukung: PDF, DOCX, TXT, CSV, XLSX, XLS.' });
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    fs.writeFileSync(path.join(OUT, id + '.xlsx'), workbook(rows));
+    res.json({ id, rows: pad(rows).slice(0, 200), count: rows.length });
+  } catch (e) { res.status(500).json({ error: 'Gagal membaca file: ' + e.message }); }
+  finally { try { fs.unlinkSync(p); } catch {} }
 });
 
 app.get('/api/download/:id', (req, res) => {
@@ -160,53 +118,4 @@ app.get('/api/download/:id', (req, res) => {
   res.download(p, 'hasil-konversi.xlsx');
 });
 
-app.post('/api/check-url', async (req, res) => {
-  const url = String(req.body?.url || '').trim();
-  let u;
-  try { u = new URL(url); }
-  catch { return res.status(400).json({ error: 'URL tidak valid.' }); }
-
-  if (!/(^|\.)scribd\.com$/i.test(u.hostname)) {
-    return res.status(400).json({ error: 'Masukkan URL Scribd yang valid.' });
-  }
-
-  try {
-    const r = await axios.get(url, {
-      timeout: 12000,
-      headers: { 'User-Agent': 'Mozilla/5.0' },
-      maxRedirects: 5
-    });
-    const $ = cheerio.load(r.data);
-    const title =
-      $('meta[property="og:title"]').attr('content') ||
-      $('title').text().trim() ||
-      'Dokumen Scribd';
-
-    const links = [];
-    $('a[href]').each((_, a) => {
-      const h = $(a).attr('href');
-      if (!h) return;
-      if (/(download|\.pdf(?:\?|$)|\.docx?(?:\?|$)|\.xlsx?(?:\?|$))/i.test(h)) {
-        try { links.push(new URL(h, url).href); } catch {}
-      }
-    });
-
-    const unique = [...new Set(links)].slice(0, 10);
-    res.json({
-      title,
-      url,
-      publicDownloadLinks: unique,
-      message: unique.length
-        ? 'Ditemukan tautan yang tampak seperti unduhan publik. Jika tautan tersebut dapat diakses tanpa login, Anda dapat membukanya atau menyalinnya ke fitur "Unduh URL File Publik".'
-        : 'Tidak ditemukan tautan file publik pada halaman Scribd. Jika dokumen dapat Anda unduh, gunakan tombol Unduh resmi Scribd lalu unggah file tersebut ke aplikasi.'
-    });
-  } catch {
-    res.status(502).json({
-      error: 'Halaman Scribd tidak dapat diperiksa dari server. Buka URL di Scribd atau gunakan unduhan resmi Scribd.'
-    });
-  }
-});
-
-app.listen(process.env.PORT || 3000, () =>
-  console.log('Scribd Excel V2 running on ' + (process.env.PORT || 3000))
-);
+app.listen(process.env.PORT || 3000, () => console.log('Document Downloader + Excel running on ' + (process.env.PORT || 3000)));
