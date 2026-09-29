@@ -1,3 +1,5 @@
 Pillow>=10.0
 scribd-downloader @ git+https://github.com/Phoenix124/scribd-downloader.git
 openpyxl>=3.1.0
+
+PyMuPDF>=1.24.0

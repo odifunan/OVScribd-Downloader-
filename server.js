@@ -67,6 +67,17 @@ function workbook(rows, fullText = '') {
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 }
 function safeId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 9); }
+function createVisualExcel(id, imagePaths) {
+  const output = path.join(OUT, id + '.visual.xlsx');
+  const helper = path.join(process.cwd(), 'scripts', 'visual_excel.py');
+  return new Promise((resolve, reject) => {
+    const child = spawn(pythonCommand(), [helper, output, ...imagePaths], { stdio: 'inherit' });
+    child.on('error', reject);
+    child.on('close', code => code === 0 && fs.existsSync(output)
+      ? resolve(output)
+      : reject(new Error('Gagal membuat Excel tampilan asli.')));
+  });
+}
 async function polishExcel(filePath) {
   const helper = path.join(process.cwd(), 'scripts', 'format_excel.py');
   const tmpPath = filePath.replace(/\.xlsx$/i, '.formatted.xlsx');
@@ -198,7 +209,8 @@ app.post('/api/scribd/download', async (req, res) => {
       const id = safeId();
       const manifest = images.map(x => x.path);
       fs.writeFileSync(path.join(OUT, id + '.json'), JSON.stringify({ images: manifest }));
-      return res.json({ id, type: 'images', pages: images.length, title: path.basename(images[0].name).replace(/[_-]?\d+\.(jpe?g|png|webp)$/i, ''), download: `/api/scribd/file/${id}`, note: 'Dokumen terdiri dari halaman gambar. Gunakan Download PDF untuk menggabungkan halaman.' });
+      await createVisualExcel(id, manifest);
+      return res.json({ id, type: 'images', pages: images.length, title: path.basename(images[0].name).replace(/[_-]?(\d+)\.(jpe?g|png|webp)$/i, ''), download: `/api/scribd/file/${id}`, excel: `/api/scribd/exact-excel/${id}`, pdf: `/api/scribd/pdf/${id}`, note: 'Excel ini mempertahankan tampilan halaman sebagai gambar agar posisi tabel dan tulisan sama seperti dokumen asli.' });
     }
     return res.status(422).json({ error: 'Engine tidak menghasilkan dokumen. Pastikan URL menunjuk ke dokumen yang dapat diakses dan Anda memiliki hak untuk mengunduhnya.' });
   } catch (e) {
@@ -217,6 +229,11 @@ app.get('/api/scribd/excel/:id', (req, res) => {
   const p = path.join(OUT, req.params.id + '.xlsx');
   if (!fs.existsSync(p)) return res.status(404).send('Excel tidak ditemukan.');
   res.download(p, 'hasil-scribd.xlsx');
+});
+app.get('/api/scribd/exact-excel/:id', (req, res) => {
+  const p = path.join(OUT, req.params.id + '.visual.xlsx');
+  if (!fs.existsSync(p)) return res.status(404).send('Excel tampilan asli tidak ditemukan.');
+  res.download(p, 'dokumen-scribd-tampilan-asli.xlsx');
 });
 app.get('/api/scribd/pdf/:id', (req, res) => {
   const manifestPath = path.join(OUT, req.params.id + '.json');

@@ -35,3 +35,6 @@ npm start
 Engine pihak ketiga diintegrasikan tanpa menerima username/password Scribd/Everand, CAPTCHA, DRM bypass, atau kredensial subscription. Gunakan hanya pada dokumen yang memang dapat Anda akses dan unduh secara sah.
 
 Repository engine menyatakan proyeknya unsupported dan mendokumentasikan bahwa dokumen Scribd berbasis gambar diproses berbeda dari dokumen teks; karena itu mode Auto dapat mencoba mode gambar sebagai fallback. Lihat dokumentasi upstream sebelum deployment produksi.
+
+## Excel Tampilan Asli
+Untuk dokumen Scribd yang dihasilkan sebagai halaman gambar, aplikasi membuat `Tampilan Asli.xlsx`. Setiap halaman dimasukkan sebagai gambar dengan rasio dan urutan yang sama seperti dokumen sumber. Ini adalah cara paling akurat untuk mempertahankan posisi tabel, tulisan, margin, dan elemen visual di Excel. Sheet ini tidak dimaksudkan untuk mengedit teks per sel; gunakan Excel data terpisah bila membutuhkan data yang dapat diedit.
