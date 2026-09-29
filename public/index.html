@@ -1,8 +1,8 @@
 <!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Document Downloader → Excel</title>
-<style>*{box-sizing:border-box}body{margin:0;font-family:Inter,system-ui,Arial;background:#f4f7fb;color:#172033}.wrap{max-width:1050px;margin:auto;padding:28px 18px}.hero{background:linear-gradient(135deg,#111827,#2563eb);color:#fff;border-radius:24px;padding:30px;box-shadow:0 18px 50px #17255422}.hero h1{margin:0 0 8px;font-size:32px}.hero p{margin:0;opacity:.9}.tabs{display:flex;gap:8px;flex-wrap:wrap;margin-top:20px}.tab{border:1px solid #d5dbea;background:#fff;padding:10px 15px;border-radius:12px;cursor:pointer;font-weight:700}.tab.active{background:#2563eb;color:#fff;border-color:#2563eb}.card{background:#fff;border-radius:20px;padding:22px;margin-top:18px;box-shadow:0 8px 30px #0f172a10}.input{width:100%;padding:14px;border:1px solid #d5dbea;border-radius:12px;font-size:15px}.row{display:flex;gap:10px;flex-wrap:wrap}.btn{border:0;border-radius:12px;padding:12px 17px;background:#2563eb;color:#fff;font-weight:800;cursor:pointer}.btn.secondary{background:#0f172a}.btn:disabled{opacity:.5;cursor:not-allowed}.status{margin-top:14px;padding:13px;border-radius:12px;background:#f1f5f9;white-space:pre-wrap}.result{margin-top:16px;padding:16px;border:1px solid #dbe4f0;border-radius:15px;background:#f8fafc}.badge{display:inline-block;padding:5px 9px;border-radius:999px;background:#dbeafe;color:#1d4ed8;font-size:12px;font-weight:800}.drop{border:2px dashed #b9c3d8;padding:25px;text-align:center;border-radius:16px}.small{font-size:12px;color:#64748b;line-height:1.5}.hidden{display:none}.links a{display:block;margin:8px 0;color:#2563eb}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.tablewrap{overflow:auto;margin-top:18px}table{border-collapse:collapse;width:100%;font-size:13px}td,th{border:1px solid #dbe1ea;padding:8px;text-align:left;min-width:100px}th{background:#eff6ff}@media(max-width:760px){.grid{grid-template-columns:1fr}.hero h1{font-size:27px}}</style></head>
+<style>*{box-sizing:border-box}body{margin:0;font-family:Inter,system-ui,Arial;background:#f4f7fb;color:#172033}.wrap{max-width:1050px;margin:auto;padding:28px 18px}.hero{background:linear-gradient(135deg,#111827,#2563eb);color:#fff;border-radius:24px;padding:30px;box-shadow:0 18px 50px #17255422}.hero h1{margin:0 0 8px;font-size:32px}.hero p{margin:0;opacity:.9}.tabs{display:flex;gap:8px;flex-wrap:wrap;margin-top:20px}.tab{border:1px solid #d5dbea;background:#fff;padding:10px 15px;border-radius:12px;cursor:pointer;font-weight:700}.tab.active{background:#2563eb;color:#fff;border-color:#2563eb}.card{background:#fff;border-radius:20px;padding:22px;margin-top:18px;box-shadow:0 8px 30px #0f172a10}.input{width:100%;padding:14px;border:1px solid #d5dbea;border-radius:12px;font-size:15px}.row{display:flex;gap:10px;flex-wrap:wrap}.btn{border:0;border-radius:12px;padding:12px 17px;background:#2563eb;color:#fff;font-weight:800;cursor:pointer}.btn.secondary{background:#0f172a}.btn:disabled{opacity:.5;cursor:not-allowed}.status{margin-top:14px;padding:13px;border-radius:12px;background:#f1f5f9;white-space:pre-wrap}.result{margin-top:16px;padding:16px;border:1px solid #dbe4f0;border-radius:15px;background:#f8fafc}.badge{display:inline-block;padding:5px 9px;border-radius:999px;background:#dbeafe;color:#1d4ed8;font-size:12px;font-weight:800}.drop{border:2px dashed #b9c3d8;padding:25px;text-align:center;border-radius:16px}.small{font-size:12px;color:#64748b;line-height:1.5}.hidden{display:none}.links a{display:block;margin:8px 0;color:#2563eb}.formatbox{margin-top:18px;padding:18px;border:2px solid #dbeafe;border-radius:16px;background:#fff}.formatbox h3{margin:0 0 12px}.formatgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.formatbtn{display:flex;align-items:center;justify-content:center;gap:8px;min-height:54px;text-decoration:none;border-radius:12px;font-weight:800;padding:12px 14px}.formatbtn.pdf{background:#fee2e2;color:#b91c1c}.formatbtn.word{background:#dbeafe;color:#1d4ed8}.formatbtn.excel{background:#dcfce7;color:#15803d}.formatnote{margin-top:10px;font-size:12px;color:#64748b}@media(max-width:760px){.formatgrid{grid-template-columns:1fr}}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.tablewrap{overflow:auto;margin-top:18px}table{border-collapse:collapse;width:100%;font-size:13px}td,th{border:1px solid #dbe1ea;padding:8px;text-align:left;min-width:100px}th{background:#eff6ff}@media(max-width:760px){.grid{grid-template-columns:1fr}.hero h1{font-size:27px}}</style></head>
 <body><div class="wrap">
 <section class="hero"><h1>📥 Document Downloader → Excel</h1><p>Masukkan URL dokumen, proses melalui server, lalu unduh hasil yang tersedia.</p><div class="tabs"><button class="tab active" data-site="scribd">Scribd</button><button class="tab" data-site="issuu" disabled>Issuu</button><button class="tab" data-site="slideshare" disabled>SlideShare</button><button class="tab" data-site="academia" disabled>Academia</button></div></section>
-<section class="card"><h2>1. Masukkan URL</h2><input id="url" class="input" placeholder="https://www.scribd.com/document/..."/><div class="row" style="margin-top:10px"><select id="mode" class="input" style="max-width:230px"><option value="auto">Auto — Pertahankan Layout Asli</option><option value="text">Teks</option><option value="images">Halaman gambar</option></select><button class="btn" id="getBtn" onclick="getLink()">Get Link</button></div><div id="urlStatus" class="status">Pilih Scribd lalu masukkan URL dokumen.</div><div id="result" class="result hidden"></div></section>
+<section class="card"><h2>1. Masukkan URL</h2><input id="url" class="input" placeholder="https://www.scribd.com/document/..."/><div class="row" style="margin-top:10px"><select id="mode" class="input" style="max-width:230px"><option value="auto">Auto — Pertahankan Layout Asli</option><option value="text">Teks</option><option value="images">Halaman gambar</option></select><button class="btn" id="getBtn" onclick="getLink()">Get Link</button></div><div id="urlStatus" class="status">Pilih Scribd lalu masukkan URL dokumen.</div><div id="result" class="result hidden"></div><div id="downloadFormats" class="formatbox hidden"><h3>📥 Pilih Format Download</h3><div id="formatGrid" class="formatgrid"></div><div id="formatNote" class="formatnote"></div></div></section>
 <section class="grid"><section class="card"><h2>2. Upload file</h2><div class="drop"><input id="file" type="file" accept=".pdf,.docx,.txt,.md,.csv,.xls,.xlsx"><p class="small">PDF, DOCX, TXT, MD, CSV, XLS, XLSX • maksimal 25 MB</p><button class="btn" onclick="convert()">Ekstrak & Buat Excel</button></div><div id="fileStatus" class="status">Belum ada file diproses.</div></section>
 <section class="card"><h2>3. Preview Excel</h2><div id="previewText" class="small">Preview akan muncul setelah konversi file.</div><div class="tablewrap"><table id="tbl"></table></div><button id="download" class="btn secondary hidden">⬇ Download Excel</button></section></section>
 <section class="card"><h2>Catatan</h2><p class="small">Engine Scribd hanya digunakan untuk dokumen yang dapat Anda akses dan unduh secara sah. Aplikasi ini tidak menerima password akun, tidak mengatasi CAPTCHA/DRM, dan tidak dirancang untuk melewati paywall atau subscription.</p></section>
@@ -43,19 +43,33 @@ async function getLink(){
     }
     let out='<span class="badge">BERHASIL</span><h3>'+esc(d.title||cd.title||'Dokumen Scribd')+'</h3>';
     if(d.type==='text'){
-      out+='<p>'+esc(d.textPreview||'').slice(0,5000)+'</p><div class="row"><a class="btn" href="'+esc(d.pdf)+'">⬇ Download PDF</a><a class="btn" href="'+esc(d.word)+'">⬇ Download Word</a><a class="btn secondary" href="'+esc(d.excel)+'">⬇ Download Excel</a></div>';
+      out+='<p>'+esc(d.textPreview||'').slice(0,5000)+'</p>';
     }else{
-      out+='<p>'+esc(d.pages||0)+' halaman gambar.</p><div class="row"><a class="btn" href="'+esc(d.pdf)+'">⬇ Download PDF</a><a class="btn" href="'+esc(d.word)+'">⬇ Download Word</a><a class="btn secondary" href="'+esc(d.excel)+'">⬇ Download Excel Tampilan Asli</a></div><p class="small">Excel tampilan asli mempertahankan setiap halaman sebagai gambar agar posisi tulisan dan tabel tetap sama secara visual.</p>';
+      out+='<p>'+esc(d.pages||0)+' halaman gambar.</p><p class="small">Excel tampilan asli mempertahankan setiap halaman sebagai gambar agar posisi tulisan dan tabel tetap sama secara visual.</p>';
     }
     rbox.innerHTML=out;
     rbox.classList.remove('hidden');
-    s.textContent='Selesai.';
+    showDownloadFormats({pdf:d.pdf,word:d.word,excel:d.excel}, d.type==='images' ? 'Excel menggunakan tampilan halaman asli agar posisi tabel dan tulisan tetap sama secara visual.' : 'Pilih format yang ingin Anda unduh.');
+    s.textContent='Selesai. Pilih format download di bawah.';
   }catch(e){
     s.textContent=e.message||'Terjadi kesalahan.';
   }finally{
     b.disabled=false;
   }
 }
+function showDownloadFormats(files, note='') {
+  const box=document.getElementById('downloadFormats');
+  const grid=document.getElementById('formatGrid');
+  const noteEl=document.getElementById('formatNote');
+  const items=[['pdf','📄 Download PDF','formatbtn pdf'],['word','📝 Download Word','formatbtn word'],['excel','📊 Download Excel','formatbtn excel']];
+  grid.innerHTML='';
+  for(const [key,label,cls] of items){
+    if(!files[key]) continue;
+    const a=document.createElement('a'); a.className=cls; a.href=files[key]; a.textContent=label; a.setAttribute('download',''); grid.appendChild(a);
+  }
+  noteEl.textContent=note; box.classList.toggle('hidden', grid.children.length===0);
+}
+
 async function convert(){
  const f=document.getElementById('file').files[0],s=document.getElementById('fileStatus');
  if(!f)return s.textContent='Pilih file terlebih dahulu.';
@@ -68,11 +82,9 @@ async function convert(){
   document.getElementById('previewText').textContent=d.exactExcel?'PDF dipertahankan sebagai layout asli.':'Baris terdeteksi: '+d.count;
   let t=d.rows.length?'<thead><tr>'+d.rows[0].map((_,i)=>'<th>Kolom '+(i+1)+'</th>').join('')+'</tr></thead><tbody>':'';
   d.rows.forEach(row=>{t+='<tr>'+row.map(c=>'<td>'+esc(c)+'</td>').join('')+'</tr>'});if(d.rows.length)t+='</tbody>';document.getElementById('tbl').innerHTML=t;
-  const btn=document.getElementById('download');btn.classList.remove('hidden');btn.textContent='⬇ Download Excel';btn.onclick=()=>location.href=(d.exactExcel||d.excel||('/api/download/'+d.id));
-  const old=document.getElementById('uploadActions');if(old)old.remove();
-  const actions=document.createElement('div');actions.id='uploadActions';actions.className='row';actions.style.marginTop='10px';
-  [[d.pdf,'⬇ Download PDF'],[d.word,'⬇ Download Word'],[d.exactExcel||d.excel,'⬇ Download Excel']].forEach(([href,label])=>{if(href){const a=document.createElement('a');a.className='btn';a.href=href;a.textContent=label;actions.appendChild(a)}});
-  document.getElementById('download').after(actions);
+  const excelUrl=d.exactExcel||d.excel||('/api/download/'+d.id);
+  const btn=document.getElementById('download');btn.classList.remove('hidden');btn.textContent='⬇ Download Excel';btn.onclick=()=>location.href=excelUrl;
+  showDownloadFormats({pdf:d.pdf,word:d.word,excel:excelUrl}, d.exactExcel ? 'PDF asli dipertahankan sebagai tampilan halaman pada Excel.' : 'File tersedia dalam format PDF, Word, dan Excel.');
  }catch(e){s.textContent=e.message||'Terjadi kesalahan.'}
 }
 
