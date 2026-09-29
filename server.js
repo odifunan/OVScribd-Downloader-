@@ -214,7 +214,17 @@ app.post('/api/scribd/download', async (req, res) => {
     }
     return res.status(422).json({ error: 'Engine tidak menghasilkan dokumen. Pastikan URL menunjuk ke dokumen yang dapat diakses dan Anda memiliki hak untuk mengunduhnya.' });
   } catch (e) {
-    return res.status(502).json({ error: e.message, hint: 'Pastikan Python 3 dan scribd-downloader sudah terpasang. Di Railway, gunakan Dockerfile yang disertakan.' });
+    const msg = String(e?.message || e);
+    const blocked = /Client Challenge|browser check|blocked the automated request|ScribdFetchError/i.test(msg);
+    if (blocked) {
+      return res.status(502).json({
+        code: 'SCRIBD_BROWSER_CHECK',
+        error: 'Scribd memblokir permintaan otomatis dari server (Browser Check). Karena itu dokumen belum dapat diambil oleh engine.',
+        detail: 'Buka dokumen di Scribd menggunakan browser, gunakan fitur download resmi jika tersedia, lalu unggah file tersebut ke bagian konversi Excel.',
+        openUrl: url
+      });
+    }
+    return res.status(502).json({ error: 'Gagal mengambil dokumen: ' + msg.slice(-1200), hint: 'Pastikan Python 3 dan scribd-downloader sudah terpasang. Di Railway, gunakan Dockerfile yang disertakan.' });
   }
 });
 
