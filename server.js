@@ -19,23 +19,65 @@ const upload = multer({ dest: TMP, limits: { fileSize: 25 * 1024 * 1024 } });
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static('public'));
 
+function cleanCell(value) {
+  return String(value ?? '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/[ \t]+$/g, '')
+    .trim();
+}
 function rowsFromText(text) {
-  return text.split(/\r?\n/).map(s => s.trim()).filter(Boolean).map(line => {
-    const parts = line.includes('\t') ? line.split('\t') : line.split(/\s{2,}/);
-    return parts.map(x => x.trim());
-  });
+  const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
+  const rows = [];
+  for (const raw of lines) {
+    const line = cleanCell(raw);
+    if (!line) continue;
+    let parts;
+    if (line.includes('\t')) parts = line.split('\t').map(cleanCell);
+    else if (/\s{2,}/.test(line)) parts = line.split(/\s{2,}/).map(cleanCell);
+    else parts = [line];
+    if (parts.some(Boolean)) rows.push(parts);
+  }
+  return rows;
+}
+function normalizeRows(rows) {
+  return rows
+    .map(r => Array.isArray(r) ? r.map(cleanCell) : [cleanCell(r)])
+    .filter(r => r.some(v => v !== ''));
 }
 function pad(rows) {
-  const n = Math.max(1, ...rows.map(r => r.length));
-  return rows.map(r => Array.from({ length: n }, (_, i) => r[i] ?? ''));
+  const normalized = normalizeRows(rows);
+  const n = Math.max(1, ...normalized.map(r => r.length));
+  return normalized.map(r => Array.from({ length: n }, (_, i) => r[i] ?? ''));
 }
-function workbook(rows) {
-  const ws = XLSX.utils.aoa_to_sheet(pad(rows));
+function workbook(rows, fullText = '') {
+  let normalized = pad(rows);
+  if (normalized.length && normalized.every(r => r.length === 1)) {
+    normalized = normalized.map((r, i) => [i + 1, r[0]]);
+  }
+  const ws = XLSX.utils.aoa_to_sheet(normalized);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Data');
+
+  // Keep the original text in a second sheet so no content is lost during parsing.
+  const full = String(fullText || '').replace(/\r\n?/g, '\n').split('\n').filter(x => x.trim());
+  if (full.length) {
+    const fullWs = XLSX.utils.aoa_to_sheet([['No.', 'Isi Dokumen'], ...full.map((v, i) => [i + 1, cleanCell(v)])]);
+    XLSX.utils.book_append_sheet(wb, fullWs, 'Dokumen Lengkap');
+  }
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 }
 function safeId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 9); }
+async function polishExcel(filePath) {
+  const helper = path.join(process.cwd(), 'scripts', 'format_excel.py');
+  const tmpPath = filePath.replace(/\.xlsx$/i, '.formatted.xlsx');
+  await new Promise((resolve, reject) => {
+    const child = spawn(pythonCommand(), [helper, filePath, tmpPath], { stdio: 'inherit' });
+    child.on('error', reject);
+    child.on('close', code => code === 0 ? resolve() : reject(new Error('Gagal merapikan format Excel.')));
+  });
+  fs.renameSync(tmpPath, filePath);
+}
+
 function isScribdUrl(raw) {
   try {
     const u = new URL(raw);
@@ -91,7 +133,9 @@ app.post('/api/extract', upload.single('file'), async (req, res) => {
     else if (ext === '.docx') { const data = await mammoth.extractRawText({ path: p }); rows = rowsFromText(data.value); }
     else return res.status(400).json({ error: 'Format didukung: PDF, DOCX, TXT, MD, CSV, XLSX, XLS.' });
     const id = safeId();
-    fs.writeFileSync(path.join(OUT, id + '.xlsx'), workbook(rows));
+    const originalText = ['.txt', '.md', '.pdf', '.docx'].includes(ext) ? (ext === '.docx' ? '' : fs.readFileSync(p, 'utf8')) : '';
+    fs.writeFileSync(path.join(OUT, id + '.xlsx'), workbook(rows, originalText));
+    await polishExcel(path.join(OUT, id + '.xlsx'));
     res.json({ id, rows: pad(rows).slice(0, 200), count: rows.length });
   } catch (e) { res.status(500).json({ error: 'Gagal membaca file: ' + e.message }); }
   finally { try { fs.unlinkSync(p); } catch {} }
@@ -145,7 +189,8 @@ app.post('/api/scribd/download', async (req, res) => {
       const mdPath = path.join(OUT, id + '.md');
       const xlsxPath = path.join(OUT, id + '.xlsx');
       fs.writeFileSync(mdPath, text);
-      fs.writeFileSync(xlsxPath, workbook(rowsFromText(text)));
+      fs.writeFileSync(xlsxPath, workbook(rowsFromText(text), text));
+      await polishExcel(xlsxPath);
       return res.json({ id, type: 'text', title: base, textPreview: text.slice(0, 8000), download: `/api/scribd/file/${id}`, excel: `/api/scribd/excel/${id}` });
     }
 
