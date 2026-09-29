@@ -3,3 +3,5 @@ scribd-downloader @ git+https://github.com/Phoenix124/scribd-downloader.git
 openpyxl>=3.1.0
 
 PyMuPDF>=1.24.0
+python-docx>=1.1.2
+reportlab>=4.2.0

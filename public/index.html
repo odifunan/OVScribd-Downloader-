@@ -43,9 +43,9 @@ async function getLink(){
     }
     let out='<span class="badge">BERHASIL</span><h3>'+esc(d.title||cd.title||'Dokumen Scribd')+'</h3>';
     if(d.type==='text'){
-      out+='<p>'+esc(d.textPreview||'').slice(0,5000)+'</p><div class="row"><a class="btn" href="'+esc(d.download)+'">⬇ Download Teks</a><a class="btn secondary" href="'+esc(d.excel)+'">⬇ Download Excel</a></div>';
+      out+='<p>'+esc(d.textPreview||'').slice(0,5000)+'</p><div class="row"><a class="btn" href="'+esc(d.pdf)+'">⬇ Download PDF</a><a class="btn" href="'+esc(d.word)+'">⬇ Download Word</a><a class="btn secondary" href="'+esc(d.excel)+'">⬇ Download Excel</a></div>';
     }else{
-      out+='<p>'+esc(d.pages||0)+' halaman gambar.</p><div class="row"><a class="btn" href="'+esc(d.pdf)+'">⬇ Download PDF</a><a class="btn secondary" href="'+esc(d.excel)+'">⬇ Download Excel Tampilan Asli</a></div><p class="small">Excel tampilan asli mempertahankan setiap halaman sebagai gambar agar posisi tulisan dan tabel tetap sama secara visual.</p>';
+      out+='<p>'+esc(d.pages||0)+' halaman gambar.</p><div class="row"><a class="btn" href="'+esc(d.pdf)+'">⬇ Download PDF</a><a class="btn" href="'+esc(d.word)+'">⬇ Download Word</a><a class="btn secondary" href="'+esc(d.excel)+'">⬇ Download Excel Tampilan Asli</a></div><p class="small">Excel tampilan asli mempertahankan setiap halaman sebagai gambar agar posisi tulisan dan tabel tetap sama secara visual.</p>';
     }
     rbox.innerHTML=out;
     rbox.classList.remove('hidden');
@@ -56,6 +56,25 @@ async function getLink(){
     b.disabled=false;
   }
 }
-async function convert(){const f=document.getElementById('file').files[0],s=document.getElementById('fileStatus');if(!f)return s.textContent='Pilih file terlebih dahulu.';s.textContent='Memproses...';const fd=new FormData();fd.append('file',f);try{const r=await fetch('/api/extract',{method:'POST',body:fd});const d=await r.json();if(!r.ok)throw Error(d.error);s.textContent=d.exactExcel?'Berhasil. Excel layout asli juga dibuat.':'Berhasil.';document.getElementById('previewText').textContent=d.exactExcel?'PDF dipertahankan sebagai halaman asli. Preview teks hanya untuk referensi.':'Baris terdeteksi: '+d.count;let t=d.rows.length?'<thead><tr>'+d.rows[0].map((_,i)=>'<th>Kolom '+(i+1)+'</th>').join('')+'</tr></thead><tbody>':'';d.rows.forEach(row=>{t+='<tr>'+row.map(c=>'<td>'+esc(c)+'</td>').join('')+'</tr>'});if(d.rows.length)t+='</tbody>';document.getElementById('tbl').innerHTML=t;const btn=document.getElementById('download');btn.classList.remove('hidden');btn.textContent=d.exactExcel?'⬇ Download Excel — Layout Asli':'⬇ Download Excel';btn.onclick=()=>location.href=(d.exactExcel||('/api/download/'+d.id));}catch(e){s.textContent=e.message}}
+async function convert(){
+ const f=document.getElementById('file').files[0],s=document.getElementById('fileStatus');
+ if(!f)return s.textContent='Pilih file terlebih dahulu.';
+ s.textContent='Memproses PDF/Word/Excel...';
+ const fd=new FormData();fd.append('file',f);
+ try{
+  const r=await fetch('/api/extract',{method:'POST',body:fd});const d=await r.json();
+  if(!r.ok)throw Error(d.error);
+  s.textContent='Berhasil. Pilih format download di bawah.';
+  document.getElementById('previewText').textContent=d.exactExcel?'PDF dipertahankan sebagai layout asli.':'Baris terdeteksi: '+d.count;
+  let t=d.rows.length?'<thead><tr>'+d.rows[0].map((_,i)=>'<th>Kolom '+(i+1)+'</th>').join('')+'</tr></thead><tbody>':'';
+  d.rows.forEach(row=>{t+='<tr>'+row.map(c=>'<td>'+esc(c)+'</td>').join('')+'</tr>'});if(d.rows.length)t+='</tbody>';document.getElementById('tbl').innerHTML=t;
+  const btn=document.getElementById('download');btn.classList.remove('hidden');btn.textContent='⬇ Download Excel';btn.onclick=()=>location.href=(d.exactExcel||d.excel||('/api/download/'+d.id));
+  const old=document.getElementById('uploadActions');if(old)old.remove();
+  const actions=document.createElement('div');actions.id='uploadActions';actions.className='row';actions.style.marginTop='10px';
+  [[d.pdf,'⬇ Download PDF'],[d.word,'⬇ Download Word'],[d.exactExcel||d.excel,'⬇ Download Excel']].forEach(([href,label])=>{if(href){const a=document.createElement('a');a.className='btn';a.href=href;a.textContent=label;actions.appendChild(a)}});
+  document.getElementById('download').after(actions);
+ }catch(e){s.textContent=e.message||'Terjadi kesalahan.'}
+}
+
 function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 </script></body></html>

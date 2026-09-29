@@ -102,6 +102,33 @@ async function polishExcel(filePath) {
   fs.renameSync(tmpPath, filePath);
 }
 
+function runPythonHelper(args, errorMessage = 'Gagal membuat file.') {
+  return new Promise((resolve, reject) => {
+    const child = spawn(pythonCommand(), args, { stdio: 'inherit' });
+    child.on('error', reject);
+    child.on('close', code => code === 0 ? resolve() : reject(new Error(errorMessage)));
+  });
+}
+async function createDocxFromImages(id, imagePaths) {
+  const output = path.join(OUT, id + '.docx');
+  const helper = path.join(process.cwd(), 'scripts', 'images_to_docx.py');
+  await runPythonHelper([helper, output, ...imagePaths], 'Gagal membuat Word dari halaman dokumen.');
+  return output;
+}
+async function createDocxFromText(id, textPath, title) {
+  const output = path.join(OUT, id + '.docx');
+  const helper = path.join(process.cwd(), 'scripts', 'text_to_docx.py');
+  await runPythonHelper([helper, output, title || 'Dokumen', textPath], 'Gagal membuat Word.');
+  return output;
+}
+async function createPdfFromText(id, textPath, title) {
+  const output = path.join(OUT, id + '.pdf');
+  const helper = path.join(process.cwd(), 'scripts', 'text_to_pdf.py');
+  await runPythonHelper([helper, output, title || 'Dokumen', textPath], 'Gagal membuat PDF.');
+  return output;
+}
+function publicPathExists(p) { return p && fs.existsSync(p); }
+
 function isScribdUrl(raw) {
   try {
     const u = new URL(raw);
@@ -162,8 +189,28 @@ app.post('/api/extract', upload.single('file'), async (req, res) => {
     fs.writeFileSync(standardPath, workbook(rows, originalText));
     await polishExcel(standardPath);
     let exact = null;
-    if (ext === '.pdf') exact = await createPdfExactExcel(id, p);
-    res.json({ id, rows: pad(rows).slice(0, 200), count: rows.length, exactExcel: exact ? `/api/download-exact/${id}` : null, message: exact ? 'PDF dipertahankan sebagai halaman asli di Excel.' : null });
+    let word = null;
+    let pdfOut = null;
+    if (ext === '.pdf') {
+      exact = await createPdfExactExcel(id, p);
+      const renderDir = path.join(OUT, id + '-upload-pages'); fs.mkdirSync(renderDir, { recursive: true });
+      const doc = await pdfjs(fs.readFileSync(p));
+      // Re-render uploaded PDF pages for Word using the same exact-layout helper.
+      const pageHelper = path.join(process.cwd(), 'scripts', 'pdf_to_images.py');
+      await runPythonHelper([pageHelper, p, renderDir], 'Gagal merender halaman PDF.');
+      const pageImgs = newestFiles(renderDir).filter(x => /\.(jpe?g|png|webp)$/i.test(x.name)).sort((a,b)=>a.name.localeCompare(b.name)).map(x=>x.path);
+      word = await createDocxFromImages(id, pageImgs);
+      pdfOut = p;
+    } else if (ext === '.docx') {
+      word = path.join(OUT, id + '.docx'); fs.copyFileSync(p, word);
+      const txtPath = path.join(OUT, id + '-text.txt'); fs.writeFileSync(txtPath, rows.map(r=>r.join('\t')).join('\n'));
+      pdfOut = await createPdfFromText(id, txtPath, path.basename(req.file.originalname, ext));
+    } else {
+      const txtPath = path.join(OUT, id + '-text.txt'); fs.writeFileSync(txtPath, rows.map(r=>r.join('\t')).join('\n'));
+      word = await createDocxFromText(id, txtPath, path.basename(req.file.originalname, ext));
+      pdfOut = await createPdfFromText(id, txtPath, path.basename(req.file.originalname, ext));
+    }
+    res.json({ id, rows: pad(rows).slice(0, 200), count: rows.length, exactExcel: exact ? `/api/download-exact/${id}` : null, excel: `/api/download/${id}`, word: word ? `/api/download-word/${id}` : null, pdf: pdfOut ? `/api/download-pdf/${id}` : null, message: exact ? 'PDF dipertahankan sebagai halaman asli di Excel.' : null });
   } catch (e) { res.status(500).json({ error: 'Gagal membaca file: ' + e.message }); }
   finally { try { fs.unlinkSync(p); } catch {} }
 });
@@ -178,6 +225,17 @@ app.get('/api/download-exact/:id', (req, res) => {
   const p = path.join(OUT, req.params.id + '.visual.xlsx');
   if (!fs.existsSync(p)) return res.status(404).send('Excel layout asli tidak ditemukan. Silakan proses ulang.');
   res.download(p, 'hasil-konversi-tampilan-asli.xlsx');
+});
+
+app.get('/api/download-word/:id', (req, res) => {
+  const p = path.join(OUT, req.params.id + '.docx');
+  if (!fs.existsSync(p)) return res.status(404).send('Word tidak ditemukan.');
+  res.download(p, 'hasil-konversi.docx');
+});
+app.get('/api/download-pdf/:id', (req, res) => {
+  const p = path.join(OUT, req.params.id + '.pdf');
+  if (!fs.existsSync(p)) return res.status(404).send('PDF tidak ditemukan.');
+  res.download(p, 'hasil-konversi.pdf');
 });
 
 app.post('/api/check-url', async (req, res) => {
@@ -224,7 +282,9 @@ app.post('/api/scribd/download', async (req, res) => {
       fs.writeFileSync(mdPath, text);
       fs.writeFileSync(xlsxPath, workbook(rowsFromText(text), text));
       await polishExcel(xlsxPath);
-      return res.json({ id, type: 'text', title: base, textPreview: text.slice(0, 8000), download: `/api/scribd/file/${id}`, excel: `/api/scribd/excel/${id}` });
+      await createDocxFromText(id, mdPath, base);
+      await createPdfFromText(id, mdPath, base);
+      return res.json({ id, type: 'text', title: base, textPreview: text.slice(0, 8000), download: `/api/scribd/file/${id}`, excel: `/api/scribd/excel/${id}`, word: `/api/scribd/word/${id}`, pdf: `/api/scribd/pdf-text/${id}` });
     }
 
     if (images.length) {
@@ -232,7 +292,8 @@ app.post('/api/scribd/download', async (req, res) => {
       const manifest = images.map(x => x.path);
       fs.writeFileSync(path.join(OUT, id + '.json'), JSON.stringify({ images: manifest }));
       await createVisualExcel(id, manifest);
-      return res.json({ id, type: 'images', pages: images.length, title: path.basename(images[0].name).replace(/[_-]?(\d+)\.(jpe?g|png|webp)$/i, ''), download: `/api/scribd/file/${id}`, excel: `/api/scribd/exact-excel/${id}`, pdf: `/api/scribd/pdf/${id}`, note: 'Excel ini mempertahankan tampilan halaman sebagai gambar agar posisi tabel dan tulisan sama seperti dokumen asli.' });
+      await createDocxFromImages(id, manifest);
+      return res.json({ id, type: 'images', pages: images.length, title: path.basename(images[0].name).replace(/[_-]?(\d+)\.(jpe?g|png|webp)$/i, ''), download: `/api/scribd/file/${id}`, excel: `/api/scribd/exact-excel/${id}`, pdf: `/api/scribd/pdf/${id}`, word: `/api/scribd/word/${id}`, note: 'PDF, Word, dan Excel mempertahankan halaman sebagai gambar agar posisi tabel dan tulisan sama seperti dokumen asli.' });
     }
     return res.status(422).json({ error: 'Engine tidak menghasilkan dokumen. Pastikan URL menunjuk ke dokumen yang dapat diakses dan Anda memiliki hak untuk mengunduhnya.' });
   } catch (e) {
@@ -267,6 +328,17 @@ app.get('/api/scribd/exact-excel/:id', (req, res) => {
   if (!fs.existsSync(p)) return res.status(404).send('Excel tampilan asli tidak ditemukan.');
   res.download(p, 'dokumen-scribd-tampilan-asli.xlsx');
 });
+app.get('/api/scribd/word/:id', (req, res) => {
+  const p = path.join(OUT, req.params.id + '.docx');
+  if (!fs.existsSync(p)) return res.status(404).send('Word tidak ditemukan.');
+  res.download(p, 'dokumen-scribd.docx');
+});
+app.get('/api/scribd/pdf-text/:id', (req, res) => {
+  const p = path.join(OUT, req.params.id + '.pdf');
+  if (!fs.existsSync(p)) return res.status(404).send('PDF tidak ditemukan.');
+  res.download(p, 'dokumen-scribd.pdf');
+});
+
 app.get('/api/scribd/pdf/:id', (req, res) => {
   const manifestPath = path.join(OUT, req.params.id + '.json');
   if (!fs.existsSync(manifestPath)) return res.status(404).send('PDF hanya tersedia untuk hasil halaman gambar.');
